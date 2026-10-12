@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Last Signal</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="game-shell">
+    <canvas id="gameCanvas" width="960" height="540" aria-label="The Last Signal game canvas"></canvas>
+
+    <section id="startMenu" class="overlay visible" aria-live="polite">
+      <h1>The Last Signal</h1>
+      <p>Lost in the forest, recover three radio components and escape.</p>
+      <button id="startButton" type="button">Start Adventure</button>
+      <p class="hint">Move with WASD or Arrow Keys</p>
+    </section>
+
+    <section id="endMenu" class="overlay" aria-live="polite">
+      <h2 id="endTitle"></h2>
+      <p id="endText"></p>
+      <button id="restartButton" type="button">Restart</button>
+    </section>
+
+    <aside id="hud" class="hud hidden" aria-live="polite">
+      <div class="panel">
+        <div>Health: <span id="healthValue">100</span></div>
+        <div>Objective: <span id="objectiveValue">Find 3 missing radio parts</span></div>
+      </div>
+      <div class="panel">
+        <h3>Inventory</h3>
+        <ul id="inventoryList"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+</html>
