@@ -18,8 +18,12 @@ const hud = document.getElementById("hud");
 const healthValue = document.getElementById("healthValue");
 const objectiveValue = document.getElementById("objectiveValue");
 const inventoryList = document.getElementById("inventoryList");
+const touchControls = document.getElementById("touchControls");
+const touchButtons = Array.from(document.querySelectorAll(".touch-btn"));
 
 const keys = new Set();
+const touchKeys = new Set();
+const touchPointers = new Map();
 const rng = mulberry32(1337);
 const terrain = [];
 const obstacles = [];
@@ -65,6 +69,7 @@ const state = {
 
 let lastTime = 0;
 let ambienceOffset = 0;
+const isTouchDevice = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 
 startButton.addEventListener("click", () => startGame());
 restartButton.addEventListener("click", () => resetGame());
@@ -80,6 +85,7 @@ window.addEventListener("keyup", (event) => {
   keys.delete(event.key.toLowerCase());
 });
 
+setupTouchControls();
 buildWorld();
 resetGame(true);
 requestAnimationFrame(loop);
@@ -89,6 +95,7 @@ function startGame() {
   startMenu.classList.remove("visible");
   endMenu.classList.remove("visible");
   hud.classList.remove("hidden");
+  updateTouchControlsVisibility();
 }
 
 function resetGame(initial = false) {
@@ -103,6 +110,10 @@ function resetGame(initial = false) {
   player.hurtCooldown = 0;
   player.direction = "down";
   player.walkTime = 0;
+  keys.clear();
+  touchKeys.clear();
+  touchPointers.clear();
+  touchButtons.forEach((button) => button.classList.remove("active"));
 
   resetParts();
   resetEnemies();
@@ -116,6 +127,58 @@ function resetGame(initial = false) {
     startMenu.classList.remove("visible");
     hud.classList.remove("hidden");
   }
+  updateTouchControlsVisibility();
+}
+
+function setupTouchControls() {
+  touchControls.addEventListener("touchstart", (event) => event.preventDefault(), { passive: false });
+  touchControls.addEventListener("touchmove", (event) => event.preventDefault(), { passive: false });
+
+  touchButtons.forEach((button) => {
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      const key = button.dataset.key;
+      touchPointers.set(event.pointerId, key);
+      touchKeys.add(key);
+      updateTouchButtonStates();
+      button.setPointerCapture(event.pointerId);
+    });
+
+    const release = (event) => {
+      const key = touchPointers.get(event.pointerId);
+      if (!key) return;
+      touchPointers.delete(event.pointerId);
+
+      let stillActive = false;
+      for (const activeKey of touchPointers.values()) {
+        if (activeKey === key) {
+          stillActive = true;
+          break;
+        }
+      }
+
+      if (!stillActive) {
+        touchKeys.delete(key);
+      }
+      updateTouchButtonStates();
+    };
+
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+  });
+}
+
+function updateTouchControlsVisibility() {
+  const show = isTouchDevice && !startMenu.classList.contains("visible") && !endMenu.classList.contains("visible");
+  touchControls.classList.toggle("visible", show);
+  touchControls.classList.toggle("hidden", !show);
+}
+
+function updateTouchButtonStates() {
+  touchButtons.forEach((button) => {
+    const key = button.dataset.key;
+    button.classList.toggle("active", touchKeys.has(key));
+  });
 }
 
 function buildWorld() {
@@ -197,13 +260,149 @@ function placeObstacles(type, count, size) {
   }
 }
 
+function findPartPlacements(count) {
+  const reachable = getReachableWalkableTiles(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
+  const candidates = [];
+  const candidateSet = new Set();
+
+  for (const tile of reachable) {
+    if (!hasClearance(tile.x, tile.y, 1)) continue;
+    if (distanceTiles(tile.x, tile.y, Math.floor(player.x / TILE), Math.floor(player.y / TILE)) < 10) continue;
+    if (distanceTiles(tile.x, tile.y, Math.floor(tower.x / TILE), Math.floor(tower.y / TILE)) < 7) continue;
+    candidates.push(tile);
+    candidateSet.add(`${tile.x},${tile.y}`);
+  }
+
+  shuffleArray(candidates);
+
+  const selected = [];
+  let minimumDistance = 16;
+  while (selected.length < count && minimumDistance >= 8) {
+    selected.length = 0;
+    for (const tile of candidates) {
+      if (selected.length === 0 || selected.every((spot) => distanceTiles(spot.x, spot.y, tile.x, tile.y) >= minimumDistance)) {
+        selected.push(tile);
+        if (selected.length === count) break;
+      }
+    }
+    minimumDistance -= 2;
+  }
+
+  if (selected.length < count) {
+    for (const fallback of [
+      { x: 18, y: 74 },
+      { x: 56, y: 42 },
+      { x: 82, y: 80 }
+    ]) {
+      const key = `${fallback.x},${fallback.y}`;
+      if (candidateSet.has(key) && selected.length < count && !selected.some((spot) => spot.x === fallback.x && spot.y === fallback.y)) {
+        selected.push(fallback);
+      }
+    }
+  }
+
+  while (selected.length < count && candidates.length > 0) {
+    const tile = candidates.pop();
+    if (!selected.some((spot) => spot.x === tile.x && spot.y === tile.y)) {
+      selected.push(tile);
+    }
+  }
+
+  if (selected.length < count) {
+    const relaxed = reachable.filter((tile) => hasClearance(tile.x, tile.y, 0));
+    shuffleArray(relaxed);
+    for (const tile of relaxed) {
+      if (selected.length >= count) break;
+      if (!selected.some((spot) => spot.x === tile.x && spot.y === tile.y)) {
+        selected.push(tile);
+      }
+    }
+  }
+
+  return selected.slice(0, count).map((tile) => [tile.x * TILE + 2, tile.y * TILE + 2]);
+}
+
+function findEnemySpawnTiles(count) {
+  const reachable = getReachableWalkableTiles(Math.floor(player.x / TILE), Math.floor(player.y / TILE));
+  const candidates = reachable.filter((tile) =>
+    distanceTiles(tile.x, tile.y, Math.floor(player.x / TILE), Math.floor(player.y / TILE)) >= 12 &&
+    distanceTiles(tile.x, tile.y, Math.floor(tower.x / TILE), Math.floor(tower.y / TILE)) >= 6
+  );
+  shuffleArray(candidates);
+  const selected = candidates.slice(0, count);
+
+  if (selected.length < count) {
+    for (const tile of reachable) {
+      if (selected.length >= count) break;
+      if (!selected.some((spot) => spot.x === tile.x && spot.y === tile.y)) {
+        selected.push(tile);
+      }
+    }
+  }
+
+  return selected;
+}
+
+function getReachableWalkableTiles(startX, startY) {
+  const visited = new Set();
+  const queue = [{ x: startX, y: startY }];
+  const reachable = [];
+  let index = 0;
+
+  while (index < queue.length) {
+    const current = queue[index++];
+    const key = `${current.x},${current.y}`;
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    if (!isWalkableTile(current.x, current.y)) continue;
+    reachable.push(current);
+
+    queue.push({ x: current.x + 1, y: current.y });
+    queue.push({ x: current.x - 1, y: current.y });
+    queue.push({ x: current.x, y: current.y + 1 });
+    queue.push({ x: current.x, y: current.y - 1 });
+  }
+
+  return reachable;
+}
+
+function isWalkableTile(tileX, tileY) {
+  if (tileX < 0 || tileY < 0 || tileX >= WORLD_COLS || tileY >= WORLD_ROWS) return false;
+  if (terrain[tileY][tileX] === "water") return false;
+
+  const tileRect = {
+    x: tileX * TILE,
+    y: tileY * TILE,
+    w: TILE,
+    h: TILE
+  };
+
+  if (rectOverlap(tileRect, tower)) return false;
+
+  for (const obstacle of obstacles) {
+    if (rectOverlap(tileRect, obstacle)) return false;
+  }
+
+  return true;
+}
+
+function hasClearance(tileX, tileY, radius) {
+  for (let y = tileY - radius; y <= tileY + radius; y++) {
+    for (let x = tileX - radius; x <= tileX + radius; x++) {
+      if (!isWalkableTile(x, y)) return false;
+    }
+  }
+  return true;
+}
+
+function distanceTiles(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
+}
+
 function resetParts() {
   parts.length = 0;
-  const placements = [
-    [TILE * 18, TILE * 74],
-    [TILE * 56, TILE * 42],
-    [TILE * 82, TILE * 80]
-  ];
+  const placements = findPartPlacements(partNames.length);
 
   placements.forEach((spot, index) => {
     parts.push({
@@ -219,10 +418,12 @@ function resetParts() {
 
 function resetEnemies() {
   enemies.length = 0;
-  for (let i = 0; i < 8; i++) {
+  const spawnTiles = findEnemySpawnTiles(8);
+  for (let i = 0; i < spawnTiles.length; i++) {
+    const spawn = spawnTiles[i];
     enemies.push({
-      x: randomInt(15, WORLD_COLS - 15) * TILE,
-      y: randomInt(15, WORLD_ROWS - 15) * TILE,
+      x: spawn.x * TILE + 2,
+      y: spawn.y * TILE + 2,
       w: 12,
       h: 12,
       speed: 48 + rand() * 22,
@@ -265,10 +466,10 @@ function updatePlayer(delta) {
   let moveX = 0;
   let moveY = 0;
 
-  if (keys.has("w") || keys.has("arrowup")) moveY -= 1;
-  if (keys.has("s") || keys.has("arrowdown")) moveY += 1;
-  if (keys.has("a") || keys.has("arrowleft")) moveX -= 1;
-  if (keys.has("d") || keys.has("arrowright")) moveX += 1;
+  if (isMovePressed("up")) moveY -= 1;
+  if (isMovePressed("down")) moveY += 1;
+  if (isMovePressed("left")) moveX -= 1;
+  if (isMovePressed("right")) moveX += 1;
 
   const magnitude = Math.hypot(moveX, moveY);
   if (magnitude > 0) {
@@ -326,7 +527,14 @@ function updateEnemies(delta) {
       dirY = enemy.dirY / d;
     }
 
-    tryMove(enemy, dirX * enemy.speed * delta, dirY * enemy.speed * delta);
+    const moved = tryMove(enemy, dirX * enemy.speed * delta, dirY * enemy.speed * delta);
+    if (!moved) {
+      enemy.dirX = rand() * 2 - 1;
+      enemy.dirY = rand() * 2 - 1;
+      enemy.timer = randomInt(1, 3);
+      const d = Math.hypot(enemy.dirX, enemy.dirY) || 1;
+      tryMove(enemy, (enemy.dirX / d) * enemy.speed * delta, (enemy.dirY / d) * enemy.speed * delta);
+    }
 
     enemy.frame += delta * 8;
 
@@ -338,6 +546,9 @@ function updateEnemies(delta) {
 }
 
 function tryMove(entity, dx, dy) {
+  const startX = entity.x;
+  const startY = entity.y;
+
   entity.x += dx;
   if (isBlocked(entity)) entity.x -= dx;
 
@@ -346,13 +557,15 @@ function tryMove(entity, dx, dy) {
 
   entity.x = clamp(entity.x, 0, WORLD_WIDTH - entity.w);
   entity.y = clamp(entity.y, 0, WORLD_HEIGHT - entity.h);
+
+  return Math.abs(entity.x - startX) > 0.001 || Math.abs(entity.y - startY) > 0.001;
 }
 
 function isBlocked(entity) {
   const left = Math.floor(entity.x / TILE);
-  const right = Math.floor((entity.x + entity.w) / TILE);
+  const right = Math.floor((entity.x + entity.w - 1) / TILE);
   const top = Math.floor(entity.y / TILE);
-  const bottom = Math.floor((entity.y + entity.h) / TILE);
+  const bottom = Math.floor((entity.y + entity.h - 1) / TILE);
 
   for (let y = top; y <= bottom; y++) {
     for (let x = left; x <= right; x++) {
@@ -396,6 +609,7 @@ function endGame(won) {
     : "The creatures overwhelmed you before the tower could be repaired.";
 
   endMenu.classList.add("visible");
+  updateTouchControlsVisibility();
 }
 
 function updateHud() {
@@ -718,6 +932,14 @@ function rectOverlap(a, b) {
   );
 }
 
+function isMovePressed(direction) {
+  if (direction === "up") return keys.has("w") || keys.has("arrowup") || touchKeys.has("arrowup");
+  if (direction === "down") return keys.has("s") || keys.has("arrowdown") || touchKeys.has("arrowdown");
+  if (direction === "left") return keys.has("a") || keys.has("arrowleft") || touchKeys.has("arrowleft");
+  if (direction === "right") return keys.has("d") || keys.has("arrowright") || touchKeys.has("arrowright");
+  return false;
+}
+
 function randomInt(min, max) {
   return Math.floor(rand() * (max - min + 1)) + min;
 }
@@ -728,6 +950,13 @@ function rand() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function shuffleArray(items) {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
 }
 
 function mulberry32(seed) {

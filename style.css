@@ -82,6 +82,55 @@ button:hover {
   display: none;
 }
 
+.touch-controls {
+  position: absolute;
+  left: 0.8rem;
+  bottom: 0.8rem;
+  width: 10rem;
+  height: 10rem;
+  display: none;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  grid-template-areas:
+    ". up ."
+    "left . right"
+    ". down .";
+  gap: 0.35rem;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.touch-controls.hidden {
+  display: none;
+}
+
+.touch-controls.visible {
+  display: grid;
+}
+
+.touch-btn {
+  border: 2px solid #f4d799;
+  background: rgba(57, 97, 63, 0.86);
+  color: #fffce7;
+  font-size: 1.15rem;
+  font-weight: 700;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0.45rem;
+  touch-action: none;
+}
+
+.touch-btn.active {
+  background: rgba(79, 130, 79, 0.95);
+}
+
+.touch-btn.up { grid-area: up; }
+.touch-btn.left { grid-area: left; }
+.touch-btn.right { grid-area: right; }
+.touch-btn.down { grid-area: down; }
+
 .panel {
   background: rgba(18, 27, 17, 0.82);
   border: 2px solid #c2a35f;
@@ -101,4 +150,10 @@ button:hover {
 
 #inventoryList li {
   margin: 0.1rem 0;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .touch-controls.visible {
+    display: grid;
+  }
 }
